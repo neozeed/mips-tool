@@ -1,0 +1,25 @@
+# Native/WHP build products
+*.exe
+*.dll
+*.lib
+*.a
+*.obj
+*.o
+*.pdb
+*.ilk
+*.d
+
+# Frozen ReactOS import/static libraries required by OS2SS
+!1991/lib/
+!1991/exe/
+
+# Local test products and caches
+personality-core-check
+__pycache__/
+*.pyc
+
+# Editor/OS noise
+*.swp
+*~
+.DS_Store
+Thumbs.db
