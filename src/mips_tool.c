@@ -1,3 +1,4 @@
+#include "jit.h"
 #include "r3000.h"
 
 #include <stdio.h>
@@ -988,6 +989,23 @@ static int load_image(const char *path, cfe_host_t *h, uint32_t *entry_out)
     return 0;
 }
 
+/* JIT only reads stable guest RAM. Host import gates remain outside native code. */
+static const uint8_t *tool_jit_code(void *opaque, uint32_t pa, size_t len)
+{
+    cfe_host_t *h = (cfe_host_t *)opaque;
+    if (len > UINT32_MAX || !guest_range(h, pa, (unsigned)len)) return NULL;
+    return h->mem + pa;
+}
+typedef struct tool_jit_tick_ctx {
+    cfe_host_t *host;
+    r3000_cpu_t *cpu;
+} tool_jit_tick_ctx_t;
+static int tool_jit_tick(void *opaque)
+{
+    tool_jit_tick_ctx_t *t = (tool_jit_tick_ctx_t *)opaque;
+    return t->cpu->pc < 0x80000000u && !find_trap(t->host, t->cpu->pc);
+}
+
 int main(int argc, char **argv)
 {
     cfe_host_t host;
@@ -998,6 +1016,9 @@ int main(int argc, char **argv)
     uint64_t i;
     int tool_index=1;
     int verbosity=0;
+    int enable_jit=0;
+    r3k_jit_t *jit=NULL;
+    tool_jit_tick_ctx_t tick_ctx;
 
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
@@ -1007,7 +1028,11 @@ int main(int argc, char **argv)
         return 0;
     }
     while (tool_index < argc && argv[tool_index][0]=='-') {
-        if (!strcmp(argv[tool_index], "-q") || !strcmp(argv[tool_index], "--quiet")) {
+        if (!strcmp(argv[tool_index], "--jit")) {
+            enable_jit=1;
+        } else if (!strcmp(argv[tool_index], "--no-jit")) {
+            enable_jit=0;
+        } else if (!strcmp(argv[tool_index], "-q") || !strcmp(argv[tool_index], "--quiet")) {
             verbosity=0;
         } else if (!strcmp(argv[tool_index], "-v") || !strcmp(argv[tool_index], "--verbose")) {
             verbosity=2;
@@ -1114,6 +1139,13 @@ int main(int argc, char **argv)
             printf("MIPS-TOOL: starting R3000 at %08x sp=%08x; instruction limit=unlimited\n",
                    entry,cpu.gpr[29]);
     }
+    tick_ctx.host=&host;
+    tick_ctx.cpu=&cpu;
+    if (enable_jit) {
+        jit=r3k_jit_create(&cpu,tool_jit_code,&host,tool_jit_tick,&tick_ctx);
+        if (!jit) fprintf(stderr,"MIPS-TOOL: JIT unavailable; using interpreter\n");
+        else fprintf(stderr,"MIPS-TOOL: JIT backend %s enabled\n",r3k_jit_backend());
+    }
     for (i=0; !max_insns || i<max_insns; i++) {
         const import_rec_t *imp=find_trap(&host,cpu.pc);
         if (imp) {
@@ -1135,6 +1167,10 @@ int main(int argc, char **argv)
             fprintf(stderr,"MIPS-TOOL: guest exception: pc=%08x epc=%08x cause=%08x exc=%u (%s) badvaddr=%08x after %llu host calls\n",
                     cpu.pc,cpu.cp0[R3K_C0_EPC],cpu.cp0[R3K_C0_CAUSE],exc,r3000_exception_name(exc),cpu.cp0[R3K_C0_BADVADDR],(unsigned long long)host.hostcalls);
             r3000_dump(&cpu); free(host.mem); return 1;
+        }
+        if (jit) {
+            uint64_t n=r3k_jit_run(jit, max_insns ? max_insns-i : 128u, 0, 0);
+            if (n) { i += n-1; continue; }
         }
         if (r3000_step(&cpu)!=0) { fprintf(stderr,"MIPS-TOOL: CPU stopped\n"); r3000_dump(&cpu); free(host.mem); return 1; }
     }

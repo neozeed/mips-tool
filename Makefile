@@ -27,8 +27,8 @@ DEPS = $(HOST_OBJS:.o=.d)
 all: mips-tool
 
 
-mips-tool: src/mips_tool.c src/r3000.c src/r3010.c
-	$(CC) $(CFLAGS) -Isrc -o $@ src/mips_tool.c src/r3000.c src/r3010.c $(LDLIBS)
+mips-tool: src/mips_tool.c src/r3000.c src/r3010.c src/jit.c src/jit.h
+	$(CC) $(CFLAGS) -Isrc -o $@ src/mips_tool.c src/r3000.c src/r3010.c src/jit.c $(LDLIBS)
 
 check-mips-tool: mips-tool
 	./mips-tool --version
